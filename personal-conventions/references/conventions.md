@@ -45,6 +45,29 @@ else:
 
 A default result assigned near the top can be useful when several independent checks refine it, but do not use a mutable default merely to avoid a direct early return.
 
+### Operational-context spacing
+
+Use one blank line when the reader moves from one kind of work to another. Authorization, input/default calculation, query construction, repository execution, validation, mutation, mapping, and returning are separate contexts.
+
+```java
+int pageNumber = filter.getPage() == null ? 0 : Math.max(filter.getPage(), 0);
+int requestedSize = filter.getSize() == null ? config.getAuditDefaultPageSize() : filter.getSize();
+int pageSize = Math.clamp(requestedSize, 1, config.getAuditMaximumPageSize());
+PageRequest pageRequest = PageRequest.of(pageNumber, pageSize, Sort.by(Sort.Direction.DESC, "occurredAt"));
+
+Page<AuditRecord> result = audits.findAll(specification(context, filter), pageRequest);
+```
+
+```java
+authorization.requireGridAdmin(context);
+
+AuditRecord record = audits.findById(id)
+    .filter(value -> value.getTenant().equals(context.tenant()))
+    .orElseThrow(() -> new NotFoundException(ErrorCodes.AUDIT_RECORD_NOT_FOUND));
+```
+
+The indentation inside a fluent call does not create new contexts. Keep one cohesive call together.
+
 ## Defensive-programming checklist
 
 Before side effects, check the relevant subset of:
@@ -195,6 +218,27 @@ Validate transport parameters with ecosystem tools:
 Keep query semantics in the repository/data-access layer. Prefer simple derived/query-builder methods only while intent remains obvious. Once a query has roughly four parameters, several predicates, joins, or an unreadable generated name, write the query explicitly with named/bound parameters or use the ecosystem's typed query/specification facility.
 
 Never concatenate untrusted values into queries. Return domain models or focused projections so callers do not reconstruct joins and filters.
+
+Expose domain intent rather than persistence mechanics in repository APIs:
+
+```java
+GridPreference preference = preferences.findByAccountId(context.accountId());
+LandUsePlan plan = plans.findByTenantAndPlan(context.tenant(), planId);
+```
+
+The repository implementation owns implicit rules such as `deleted_at IS NULL`, active status, tenant isolation, and any applicable project/ownership predicate. Do not force callers to know those rules through names such as `findByAccountIdAndDeletedAtIsNull`, and do not retrieve a list when the operation requires one record. Express the full predicate in a single-result database query.
+
+For multi-tenant repository operations, order arguments as:
+
+```text
+operational context or tenant/institution identifier, then entity and operation-specific values
+```
+
+This makes the isolation boundary visible and consistent at every call site.
+
+## Parameter objects
+
+Keep an operation to four or fewer scalar arguments. For a fifth input, introduce a named parameter object that groups the cohesive request data. If the object has or is expected to have more than three fields, use a regular class with explicit fields rather than a record, tuple, or record-like variation; this keeps evolution, validation, defaults, and documentation readable.
 
 ### Stored procedures
 
@@ -354,7 +398,19 @@ For a multi-tenant operation, structure logs conceptually as:
 <tenant> - <operation/event> [traceId]=... [callerId]=... [reference]=... [status]=...
 ```
 
-The tenant comes first. Use stable field names and event names so logs can be grepped or queried consistently. Include the identifiers needed to follow the operation across its lifecycle. Use structured/parameterized logging rather than string concatenation.
+The tenant comes first. Follow it with a short, plain-language account of what happened, then stable structured fields. A support person or operational agent should understand the message and decide what to investigate without source-code access. Avoid opaque implementation-oriented event names when a direct human statement is available.
+
+Prefer:
+
+```java
+log.debug("{} - Geocode API responded. [traceId]={} [status]={} [responseBody]={} [durationMs]={}",
+    context.tenant(), context.traceId(), response.code(), responseBody, elapsedMillis(startedAt));
+log.info("{} - Account debited. [sourceAccount]={} [destinationAccount]={}",
+    tenant, sourceAccount, destinationAccount);
+log.warn("platform - Authentication failed. [reason]=invalid-token");
+```
+
+Avoid messages whose meaning depends on reading code, such as `event=osm.geocode.response` or `event=websocket.authentication.rejected`. Use stable field names so logs remain grep/query friendly, include the identifiers needed to follow the operation, and use parameterized logging rather than string concatenation.
 
 Use levels deliberately:
 
@@ -392,6 +448,8 @@ Do not swallow exceptions silently. When translating an exception into a domain 
 - choose `DEBUG` only for genuinely expected/non-actionable failures, otherwise use `WARN` or `ERROR`.
 
 Avoid logging the same exception at every layer. Log it where the layer can add useful context or where it is finally handled; let it propagate otherwise.
+
+When all ordinary exceptions have exactly the same handling and their subtype does not change recovery, catch `Exception` once. Catch narrower types only when the program responds differently, must preserve a boundary contract, or can recover in a type-specific way. Do not catch fatal errors outside the ordinary exception hierarchy.
 
 ## Testing
 

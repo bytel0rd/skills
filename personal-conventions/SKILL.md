@@ -1,6 +1,6 @@
 ---
 name: beodun-personal-conventions
-description: "Design, implement, optimize, refactor, or review simple and defensive services according to  personal conventions. Applies across Python, TypeScript, Rust, Java, and other languages: readability-first maintainability, validation-first flows, explicit performance decisions, dependency-aware concurrency, early returns, domain separation, request-context propagation, informative invariant comments, searchable diagnostics, exact monetary types, and auditable records."
+description: "Design, implement, optimize, refactor, or review simple and defensive services according to personal conventions. Applies across Python, TypeScript, Rust, Java, and other languages: readability-first maintainability, validation-first flows, operational-context spacing, domain-facing repository queries, tenant-first arguments, support-readable logging, parameter objects, explicit performance decisions, dependency-aware concurrency, domain separation, request-context propagation, exact monetary types, and auditable records."
 ---
 
 #  Personal Conventions
@@ -14,7 +14,8 @@ Apply these principles across languages and frameworks. Adapt the syntax and eco
 - Avoid `else` when an earlier branch can return, throw, continue, or otherwise terminate. An `else` is acceptable when it represents a genuinely symmetric choice and improves clarity.
 - Use defensive programming: validate external input, absence, ranges, formats, cross-field constraints, state transitions, authorization, tenant ownership, and integration assumptions before performing side effects.
 - Do not use language assertions for recoverable input or business failures. Use validation results, typed errors, exceptions, or result types appropriate to the language. Reserve assertions for internal invariants that indicate programmer defects.
-- Separate logical phases with one blank line. Extract a named function when a section changes domain or responsibility.
+- Separate each operational context with one blank line. Input/default calculation, authorization, query construction, repository execution, validation, mutation, mapping, and return handling are distinct contexts even when each is only one statement. For example, leave a blank line before `repository.findAll(...)` after building a `PageRequest`, and between `authorization.require...(...)` and a repository lookup.
+- Keep statements belonging to one operation together; do not add blank lines merely to spread apart a fluent call or a single cohesive calculation. Extract a named function when a section changes domain or responsibility.
 
 ## Structure by responsibility and feature
 
@@ -47,6 +48,16 @@ Apply these principles across languages and frameworks. Adapt the syntax and eco
 - Validate request parameters at the boundary and place cross-field/business validation in a named validator or domain function.
 - Keep OpenAPI metadata with the implementation when applicable, but disable documentation endpoints by default and enable them only through explicit environment configuration.
 - Prefer enums/closed types for bounded states, operation types, implementation identifiers, response categories, and transitions rather than scattered strings.
+- Keep methods to at most four scalar arguments. When an operation needs more than four inputs, compose them into a named parameter object.
+- Do not use records, tuples, or record-like variants for parameter objects expected to contain more than three fields. Use a regular class or explicit class fields so the object can evolve clearly.
+
+## Keep persistence intent domain-facing
+
+- Name repository methods for the domain operation the caller needs, not for the predicates used to implement it. Prefer `findByAccountId(accountId)` over `findByAccountIdAndDeletedAtIsNull(accountId)` when an account preference is implicitly active, and `findByTenantAndPlan(tenant, planId)` over exposing tenant, deletion, and other persistence predicates in the method name.
+- Keep active/not-deleted rules, tenant constraints, joins, ordering, and other persistence knowledge inside the repository query. Callers should not need special schema or soft-deletion knowledge.
+- In multi-tenant operations, put the operational context or tenant/institution identifier first in repository method arguments whenever it applies—for example, `findByTenantAndPlan(tenant, planId)`.
+- Ask the database for the exact cardinality required. If the caller needs one row, issue a single-result query; do not fetch a list and filter it in application code.
+- Push applicable selection predicates such as tenant, ownership, project, active status, and soft deletion into the query rather than retrieving broader data and filtering afterward.
 
 ## Optimize deliberately
 
@@ -75,6 +86,7 @@ Apply these principles across languages and frameworks. Adapt the syntax and eco
 - Build an immutable request context at ingress containing the trace ID, tenant, authenticated caller/principal, source/channel information, caller IP, and other stable correlation identifiers relevant to the service.
 - Propagate the request context through internal async work and propagate the trace ID plus approved correlation fields to every downstream call. Preserve an accepted upstream trace ID or generate one when absent.
 - In multi-tenant systems, put the tenant identifier first in every operational log, followed by trace ID and the operation's non-sensitive identifiers.
+- Write the message portion of every operational log as a plain-language statement of what happened. A non-technical support person should be able to understand the event and make an informed decision without reading the codebase. Keep stable structured fields for searchability, but do not substitute opaque event codes such as `event=osm.geocode.response` for a human-readable message.
 - Log initiation, important transitions, integration requests/results, failures, compensation, and completion with stable, structured, grep-friendly field names.
 - Record business-significant actions in an audit trail distinct from diagnostic logs. The audit should identify who did what, for which tenant/entity, when, and with what outcome.
 - Log downstream HTTP status and a sanitized, size-bounded raw response at debug/trace level before parsing so malformed, blank, proxy-generated, or unexpected responses remain diagnosable.
@@ -89,6 +101,7 @@ Apply these principles across languages and frameworks. Adapt the syntax and eco
 - Prefer the latest stable language version supported by the project and its dependencies.
 - Use option/result/either types where absence or domain failure is expected and the caller should handle it explicitly.
 - Let unexpected failures bail out when local handling adds no value; catch errors at boundaries that translate them, compensate side effects, add useful context, or restore invariants.
+- When the handling is identical for every failure and no exception subtype affects recovery, catch the common `Exception` type once instead of enumerating or separately catching exceptions that receive the same treatment. Do not catch fatal runtime conditions represented outside the language's ordinary exception hierarchy.
 - Prefer constructor/dependency injection over hidden global dependencies.
 
 ## Verify behavior
