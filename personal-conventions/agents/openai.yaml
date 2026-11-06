@@ -1,4 +1,0 @@
-interface:
-  display_name: "Personal Conventions"
-  short_description: "Apply cross-language coding conventions"
-  default_prompt: "Use $personal-conventions to implement this service with  preferred architecture, defensive flow, and coding conventions."

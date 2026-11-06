@@ -1,9 +1,9 @@
 ---
-name: beodun-personal-conventions
-description: "Design, implement, optimize, refactor, or review simple and defensive services according to personal conventions. Applies across Python, TypeScript, Rust, Java, and other languages: readability-first maintainability, validation-first flows, operational-context spacing, domain-facing repository queries, tenant-first arguments, support-readable logging, parameter objects, explicit performance decisions, dependency-aware concurrency, domain separation, request-context propagation, exact monetary types, and auditable records."
+name: coding-convention
+description: "Design, implement, optimize, refactor, or review simple and defensive services according to personal conventions. Applies across Python, TypeScript, Rust, Java, and other languages: codebase-native implementation, anemic boundary-first design, testable interfaces, integration-owned side effects, behavior-focused tests, validation-first flows, domain-facing repositories, support-readable logging, deliberate performance, request-context propagation, exact monetary types, and auditable records."
 ---
 
-#  Personal Conventions
+# Coding Convention
 
 Apply these principles across languages and frameworks. Adapt the syntax and ecosystem tools, but preserve the architecture, readable control flow, defensive validation, and traceability.
 
@@ -19,19 +19,31 @@ Apply these principles across languages and frameworks. Adapt the syntax and eco
 
 ## Structure by responsibility and feature
 
+- Treat the existing codebase as the primary local design language. Before implementing, inspect representative neighboring production code and tests, then preserve established naming, package/folder layout, interfaces, dependency-injection style, response/result wrappers, error mapping, persistence patterns, and test structure unless the task explicitly requires changing them.
+- Extend an existing abstraction instead of introducing a parallel one that expresses the same concept differently. New code should look native to the repository and remain compatible with its public contracts.
+- Apply these personal conventions to decisions the codebase has not already made. When an established local pattern conflicts with a convention, preserve compatibility and consistency unless the user has asked for a deliberate refactor; flag serious correctness, security, or tenant-isolation problems rather than copying them silently.
 - Keep controllers/handlers thin: validate transport input, invoke the relevant application component, and map the protocol response.
 - Keep domain and persistence models in a dedicated `models` area. Do not mix them with HTTP or integration parameter types.
 - Avoid a global DTO/VO dumping ground. Put endpoint parameter types in focused `params/request` and `params/response` areas near their feature.
 - Colocate each external integration's client, request/response parameters, mappings, errors, and implementation inside that integration's feature folder.
 - Keep distinct business-component families—processors, payment rails, storage providers, notification providers—outside a generic services bucket when they form an architectural concept of their own.
 
-## Separate implementation domains
+## Keep integration effects inside the integration boundary
 
-- Treat each cohesive business capability as its own domain/module with clear ownership of its rules, models, state transitions, persistence, and public contract.
-- Do not embed one domain's implementation inside another domain's workflow. A transfer flow may ask the limits domain to check, reserve, consume, release, or reverse a limit; it must not calculate or mutate limit state itself.
-- Put cross-domain sequencing in a thin application use case/orchestrator. Domains communicate through narrow interfaces and domain-level commands/results, not each other's repositories or internal models.
-- Keep compensation owned by the domain whose state is being compensated. The orchestrator decides when compensation is required; the owning domain performs it and enforces idempotency.
-- Split domains when a capability has independent rules, lifecycle, data ownership, vocabulary, or reasons to change. Do not split merely to create more folders.
+- Give each third-party integration a cohesive integrator/client service that owns the provider protocol and every integration-specific side effect. Callers invoke its public operation and consume a stable application-facing result; they do not reproduce provider workflows or manipulate the integrator's internal state.
+- Keep authentication, request construction, serialization, provider identifiers, retries, rate-limit handling, idempotency keys, response parsing, provider-status mapping, integration audit/diagnostic records, and provider-specific persistence inside that integration module.
+- Do not leak provider DTOs, status codes, exception types, or SDK objects into application/domain code. Translate them at the integration boundary into stable internal commands, results, and errors.
+- Keep core business consequences with the business context that owns them. The integrator reports what happened through an explicit result or event; the owning application service decides the business transition. Do not let a provider adapter mutate unrelated domain state merely because the provider call triggered the workflow.
+- Test the integrator's real boundary behavior in its integration tests. Unit-test callers against the integrator interface without exercising the third-party implementation.
+
+## Prefer anemic, boundary-first design
+
+- Default to a straightforward anemic implementation: data models hold data, while application services/use cases contain readable validation, sequencing, and orchestration. Do not introduce rich domain objects, aggregates, or full domain-driven design merely because the application contains business logic.
+- Preserve clear context boundaries even in an anemic design. Each capability owns a narrow public interface, its persistence and integration details, and the rules required to fulfil that contract.
+- Depend on interfaces/ports rather than concrete collaborators. A service's unit tests must be able to replace repositories, integrations, clocks, and other dependencies without testing their implementations.
+- Keep cross-context sequencing in a thin application service or use case. One context calls another context's public interface; it does not reach into the other's repository, internal model, or implementation.
+- Keep compensation and invariants with the context that owns the affected state. The orchestrator decides when an operation is needed; the owning capability performs it and enforces idempotency.
+- Introduce richer domain-driven patterns only when complexity justifies them—for example, dense invariants, meaningful entity behavior, an independent lifecycle/state machine, or a domain model that materially improves correctness and communication. DDD is a deliberate choice, not the default architecture.
 
 ## Abstract interchangeable capabilities
 
@@ -106,11 +118,14 @@ Apply these principles across languages and frameworks. Adapt the syntax and eco
 
 ## Verify behavior
 
-- Group tests by operation or behavior. Cover the successful path, each validation failure, integration failures, state transitions, and compensation paths.
-- Mock or stub external boundaries, then verify important calls and important absences of calls—not only returned values.
+- Group tests progressively by unit of behavior: operation or method first, then the condition/scenario, then the expected outcome. Test names should read from behavior to condition to result.
+- Unit tests own application and domain behavior. Isolate the subject through its interfaces using mocks, stubs, or fakes; verify results, important collaborator calls, and important absences of calls without exercising dependency implementations.
+- Integration tests own collaboration with real boundaries: repository queries, serialization, framework wiring, database constraints/transactions, provider clients, queues, filesystems, and other adapters. Test successful flows and the realistic boundary conditions that cause those integrations to fail.
+- Do not repeat every unit-test branch through integration tests. Use integration tests for behavior that depends on the integration being real, and add a small number of flow tests to prove that independently tested units and adapters are wired together correctly.
+- Cover the successful path, each validation failure, state transitions, and compensation paths at the lowest test level that can prove the behavior reliably.
 - For persistence-heavy flows, assert the appended audit entries separately from any updated summary projection.
 - Test that request context survives async boundaries, trace information reaches downstream calls, handled exceptions remain diagnosable, and logging redaction prevents secrets from appearing in captured logs.
-- Test each domain's rules independently, then test application orchestration as interactions between domain contracts. Verify one domain never bypasses another domain's public contract to mutate its state.
+- Test each context's rules independently, then test application orchestration as interactions between public contracts. Verify one context never bypasses another context's public interface to mutate its state.
 - Add tests for documented invariants, state caveats, and performance-sensitive behavior so future refactoring cannot silently invalidate the explanatory comment.
 
 Read [references/conventions.md](references/conventions.md) for language mappings, request-context and observability guidance, layout examples, concurrency decisions, collection/query guidance, monetary types, response shapes, and control-flow examples.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coding Convention"
+  short_description: "Apply boundary-first coding and testing conventions"
+  default_prompt: "Use $coding-convention to implement this service with anemic boundary-first architecture, defensive flow, and behavior-focused tests."

@@ -87,6 +87,23 @@ Handle realistic failure paths, but do not bury the main flow under speculative 
 
 ## Feature-local layout
 
+### Follow the host codebase first
+
+Before adding a new feature, sample the nearest comparable implementation and its tests. Identify and preserve the repository's established:
+
+- naming and package/folder organization;
+- controller, application-service, repository, and adapter boundaries;
+- request, response, service-result, and error envelope types;
+- dependency injection and configuration approach;
+- transaction and persistence conventions;
+- validation and exception-mapping strategy;
+- logging and request-context fields; and
+- test naming, grouping, fixtures, and assertion style.
+
+Reuse the existing response or service-result abstraction rather than creating another wrapper with slightly different semantics. Follow the local construction, mapping, and return patterns even when another style would also work. Introduce a new pattern only when the task requires it or the existing abstraction cannot represent the behavior; make that change explicit and migrate consistently rather than mixing conventions.
+
+Personal conventions fill gaps in the local design. They do not authorize needless architectural churn. However, do not perpetuate an established pattern that creates a correctness, security, data-loss, or tenant-isolation defect; surface the conflict and fix it when the task permits.
+
 Use ecosystem naming while preserving this ownership model:
 
 ```text
@@ -114,9 +131,54 @@ config/
 
 An integration should be understandable without searching a global DTO directory. Promote a type to a shared package only when it represents a genuinely shared domain or API contract, not merely because several files use it.
 
-## Domain Driven Design: Domain boundaries and orchestration
-Default to using anemic programming model with enforced context boundary except Domain Driven Design is explicity requested by the user.
-Organize cohesive business capabilities as implementation domains. For example:
+## Third-party integration ownership
+
+Treat an integration as a boundary with one application-facing contract and a cohesive implementation behind it:
+
+```text
+application/use case
+  → IntegrationPort(command)
+      → provider authentication and request mapping
+      → provider call, retry/rate-limit/idempotency behavior
+      → response capture, parsing, and provider-status mapping
+      → integration-specific diagnostics/audit state
+  ← stable internal result or error
+  → owning business context applies the business consequence
+```
+
+The integrator owns effects that exist because of the provider or transport: token refresh, idempotency records, provider references, request/response diagnostics, webhook deduplication, polling cursors, retry state, and provider-specific persistence. Keep those effects together so a caller cannot perform half of a provider workflow or forget a required provider invariant.
+
+The integrator does not automatically own every business effect that follows the call. Account state, transfer state, limits, inventory, and other core business records remain with their owning contexts. Return a result or publish an explicit event so the application orchestrator can request those transitions through the correct public interfaces.
+
+Do not expose provider SDK types or raw provider semantics above the boundary. For example, translate several provider-specific success states into an internal result such as `Accepted`, `Completed`, or `Pending`, retaining the raw provider reference inside integration-owned diagnostics when needed.
+
+Test at two levels:
+
+- callers use a fake/mock of the integration interface to prove their decisions without loading the SDK or exercising the provider; and
+- integration tests exercise the concrete adapter's serialization, headers, authentication, mappings, idempotency, retries, and realistic provider failures.
+
+## Anemic design first, with explicit context boundaries
+
+The default implementation model is intentionally anemic and service-oriented:
+
+- data models represent state and transport data without pretending every model is a rich domain object;
+- application services/use cases contain readable validation, decisions, and sequencing;
+- repositories and external systems sit behind narrow interfaces/ports;
+- concrete adapters implement those interfaces; and
+- each context exposes a public contract while hiding persistence and integration details.
+
+Anemic does not mean unstructured. Organize cohesive capabilities into clear contexts, but do not adopt aggregates, repositories per aggregate, domain events, value-object layers, or other DDD patterns without a concrete need.
+
+```text
+application service / use case
+  ├─ RepositoryPort ───────── repository adapter
+  ├─ PaymentPort ──────────── provider adapter
+  └─ NotificationPort ─────── notification adapter
+```
+
+The application service is unit-testable using replacements for each port. Its unit test proves its decisions and interactions; it does not retest SQL, HTTP serialization, or provider-client behavior.
+
+Organize cohesive capabilities with explicit ownership. For example:
 
 ```text
 domains/
@@ -136,7 +198,7 @@ application/
   initiate-transfer use case
 ```
 
-The application flow coordinates domains without absorbing their rules:
+The application flow coordinates contexts without bypassing their contracts:
 
 ```text
 validate transfer request
@@ -159,9 +221,9 @@ The exact sequence depends on business requirements, but ownership does not chan
 - the application orchestrator owns sequencing across those contracts;
 - neither domain reaches into the other's database tables, repositories, or internal models.
 
-Use domain-specific request/result types at the boundary. Translate external and transport parameters before calling the domain. If domains must react without direct orchestration, publish explicit domain events and define delivery, idempotency, ordering, and failure behavior.
+Use context-specific request/result types at the boundary. Translate external and transport parameters before calling the capability. If contexts must react without direct orchestration, publish explicit events and define delivery, idempotency, ordering, and failure behavior.
 
-Indicators that something deserves its own domain/module include independent vocabulary, business policies, lifecycle/state machine, persistence ownership, security rules, team ownership, or frequency of change. A helper function or formatting concern does not become a domain merely because it is reusable.
+Choose richer domain-driven design only when the problem demonstrates enough complexity to benefit from it: dense interacting invariants, entities with meaningful behavior, aggregates requiring transactional consistency, independent state machines/lifecycles, or a shared domain language that materially reduces ambiguity. A helper function, CRUD workflow, or ordinary orchestration flow does not justify DDD merely because it contains business rules.
 
 ## Interface and registry pattern
 
@@ -453,6 +515,14 @@ When all ordinary exceptions have exactly the same handling and their subtype do
 
 ## Testing
 
+Organize tests progressively so their names read like a behavior specification:
+
+```text
+operation / method
+  condition or scenario
+    expected outcome
+```
+
 Group related scenarios using the ecosystem's natural mechanism:
 
 - Java: JUnit `@Nested` classes, AssertJ, Mockito.
@@ -460,4 +530,22 @@ Group related scenarios using the ecosystem's natural mechanism:
 - TypeScript: nested `describe` blocks, table tests, and spies/mocks.
 - Rust: nested test modules and table-like case iteration.
 
-For each behavior, test the happy path and each meaningful guard clause. Verify that invalid input prevents downstream calls, successful input triggers the expected collaborator, and failure/compensation paths persist and log the intended state.
+### Unit tests
+
+Unit tests prove one unit of behavior. The unit may be a function, service method, use case, policy, or small collaborating object; it is defined by the behavior under test rather than by a requirement to test one class mechanically.
+
+- Replace repositories, provider clients, clocks, queues, and other boundaries through their interfaces.
+- Test the successful result, every meaningful guard or decision, state transition, collaborator call, and important absence of a call.
+- Do not require a database, network, container, framework boot, or concrete dependency implementation.
+- Do not test the mocked dependency itself. Its implementation belongs to that adapter's integration tests.
+
+### Integration tests
+
+Integration tests prove behavior that depends on a real boundary or on wiring between components. Put tests beside the integration or adapter they exercise.
+
+- Repository integration tests use the real database technology and prove queries, mappings, constraints, transactions, cardinality, tenant isolation, and soft-deletion behavior.
+- Client integration tests prove request serialization, authentication/header propagation, response mapping, timeouts, and realistic upstream failures against an appropriate test server, sandbox, emulator, or contract fixture.
+- Messaging and storage integration tests prove the real adapter's delivery, serialization, ordering, retry, and failure behavior where applicable.
+- Flow integration tests prove that independently tested units and adapters are wired correctly for a small set of successful and important failure flows.
+
+Do not copy every unit-test scenario into the integration suite. Put each assertion at the lowest level that can prove it reliably: business decisions in unit tests, boundary-dependent behavior in integration tests, and only essential cross-component journeys in flow/end-to-end tests.
