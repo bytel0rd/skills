@@ -114,8 +114,8 @@ config/
 
 An integration should be understandable without searching a global DTO directory. Promote a type to a shared package only when it represents a genuinely shared domain or API contract, not merely because several files use it.
 
-## Domain boundaries and orchestration
-
+## Domain Driven Design: Domain boundaries and orchestration
+Default to using anemic programming model with enforced context boundary except Domain Driven Design is explicity requested by the user.
 Organize cohesive business capabilities as implementation domains. For example:
 
 ```text
@@ -371,11 +371,11 @@ Create the context once at the trusted ingress boundary. A representative shape 
 RequestContext
   traceId
   tenantId
-  callerId / principal
-  callerIp
-  source / channel
+  username / principal
+  sourceIP
+  channel
   userAgent or client identity when useful
-  requestId / correlationId when distinct from traceId
+  trace-ID or trace-id
   startedAt
 ```
 
